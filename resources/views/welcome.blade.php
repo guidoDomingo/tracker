@@ -4,83 +4,121 @@
     <meta charset="UTF-8">
     <title>Tracking</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCmCOQkQoH7KDvifqpLNcrcLDl4lbhAT1Q&callback=initMap&libraries=geometry" async defer></script>
-    {{-- <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCmCOQkQoH7KDvifqpLNcrcLDl4lbhAT1Q&callback=initMap" async defer></script> --}}
 </head>
 <body>
     <div id="map" style="height: 500px; width: 100%;"></div>
 
     <script>
-        let map, marker, path = [];
+        let map, marker, polyline, destinationMarker;
+        let path = [];
         const deviceId = "866400058305579"; // ID del dispositivo
+        const destination = { lat: -25.2844707, lng: -57.5631504 }; // Coordenadas de Paseo La Galería
 
         function initMap() {
+            // Inicializar el mapa centrado en el destino inicialmente
             map = new google.maps.Map(document.getElementById("map"), {
-                zoom: 15,
-                center: { lat: -25.363, lng: 131.044 } // Coordenadas iniciales
+                zoom: 14,
+                center: destination
             });
 
-            // Monitoreo de la ubicación en tiempo real
+            // Marcar el destino en el mapa (Paseo La Galería)
+            destinationMarker = new google.maps.Marker({
+                position: destination,
+                map: map,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 6,
+                    fillColor: "green",
+                    fillOpacity: 0.8,
+                    strokeColor: "green",
+                    strokeWeight: 2
+                },
+                title: "Destino: Paseo La Galería"
+            });
+
+            // Crear una línea de polilínea para la ruta en tiempo real
+            polyline = new google.maps.Polyline({
+                path: [],
+                geodesic: true,
+                strokeColor: "#FF0000", // Color rojo para la ruta actual hacia el destino
+                strokeOpacity: 1.0,
+                strokeWeight: 2,
+                map: map
+            });
+
+            // Iniciar actualización de ubicación cada 5 segundos
+            setInterval(updateLocation, 5000);
+        }
+
+        async function updateLocation() {
             if (navigator.geolocation) {
-                navigator.geolocation.watchPosition(
+                navigator.geolocation.getCurrentPosition(
                     async (position) => {
-                        const { latitude, longitude } = position.coords;
-                        console.log("Ubicación capturada:", { latitude, longitude });
+                        const { latitude, longitude, accuracy } = position.coords;
+                        console.log("Ubicación capturada:", { latitude, longitude, accuracy });
 
                         // Enviar ubicación al backend
-                        await fetch('/api/tracking/update-location', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-TOKEN': '{{ csrf_token() }}' // Token CSRF para seguridad
-                            },
-                            body: JSON.stringify({
-                                device_id: deviceId,
-                                latitude: latitude,
-                                longitude: longitude
-                            })
-                        }).then(response => response.json())
-                          .then(data => console.log("Ubicación enviada:", data))
-                          .catch(error => console.error('Error al enviar ubicación:', error));
-
-                        // Obtener la ruta actualizada desde el backend
-                        const response = await fetch(`/api/tracking/${deviceId}/route`);
-                        const data = await response.json();
-                        path = data.map(point => new google.maps.LatLng(point.latitude, point.longitude));
-
-                        // Actualizar marcador y ruta en el mapa
-                        if (!marker) {
-                            marker = new google.maps.Marker({
-                                position: path[path.length - 1],
-                                map: map
+                        try {
+                            const response = await fetch('/api/tracking/update-location', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                                },
+                                body: JSON.stringify({
+                                    device_id: deviceId,
+                                    latitude: latitude,
+                                    longitude: longitude
+                                })
                             });
-                        } else {
-                            marker.setPosition(path[path.length - 1]);
+                            const responseData = await response.json();
+                            console.log("Ubicación enviada:", responseData);
+                        } catch (error) {
+                            console.error('Error al enviar ubicación:', error);
                         }
 
-                        // Dibujar la ruta
-                        new google.maps.Polyline({
-                            path: path,
-                            geodesic: true,
-                            strokeColor: "#FF0000",
-                            strokeOpacity: 1.0,
-                            strokeWeight: 2,
-                            map: map
-                        });
+                        // Actualizar el marcador de la ubicación actual en el mapa
+                        const currentPosition = new google.maps.LatLng(latitude, longitude);
 
-                        map.panTo(marker.getPosition());
+                        if (!marker) {
+                            marker = new google.maps.Marker({
+                                position: currentPosition,
+                                map: map,
+                                icon: {
+                                    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                                    scale: 4,
+                                    fillColor: "#0000FF",
+                                    fillOpacity: 0.8,
+                                    strokeColor: "#0000FF",
+                                    strokeWeight: 2
+                                },
+                                title: "Tu ubicación actual"
+                            });
+                        } else {
+                            marker.setPosition(currentPosition);
+                        }
+
+                        // Actualizar la polilínea de la ruta actual hacia el destino
+                        path = [currentPosition, destination]; // Ruta directa al destino
+                        polyline.setPath(path);
+                        map.panTo(currentPosition);
 
                         // Verificar si se ha llegado al destino
-                        const destino = new google.maps.LatLng(-25.363, 131.044);
-                        if (google.maps.geometry.spherical.computeDistanceBetween(marker.getPosition(), destino) < 50) {
-                            alert("¡Has llegado al destino!");
+                        const distance = google.maps.geometry.spherical.computeDistanceBetween(
+                            currentPosition,
+                            destinationMarker.getPosition()
+                        );
+                        if (distance < 50) {
+                            alert("¡Has llegado a Paseo La Galería!");
+                            clearInterval(updateLocation);
                         }
                     },
                     (error) => {
                         console.error('Error al obtener la posición:', error);
                     },
                     {
-                        enableHighAccuracy: true, // Precisión alta
-                        timeout: 5000,
+                        enableHighAccuracy: true,
+                        timeout: 10000,
                         maximumAge: 0
                     }
                 );
