@@ -22,4 +22,5 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 Route::prefix('tracking')->group(function () {
     Route::post('/update-location', [TrackingController::class, 'updateLocation']);
     Route::get('/{device}/route', [TrackingController::class, 'getRoute']);
+    Route::get('all-locations', [TrackingController::class, 'locations']);
 });

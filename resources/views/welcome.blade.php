@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Tracking</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCmCOQkQoH7KDvifqpLNcrcLDl4lbhAT1Q&callback=initMap&libraries=geometry" async defer></script>
 </head>
@@ -9,19 +10,21 @@
     <div id="map" style="height: 500px; width: 100%;"></div>
 
     <script>
-        let map, marker, polyline, destinationMarker;
-        let path = [];
-        const deviceId = "866400058305579"; // ID del dispositivo
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        let map, destinationMarker;
+        const markers = {}; // Diccionario para almacenar marcadores por `device_id`
+        const polylines = {}; // Diccionario para almacenar polilíneas por `device_id`
         const destination = { lat: -25.2844707, lng: -57.5631504 }; // Coordenadas de Paseo La Galería
+        const deviceId = "1"; // Cambia esto a un ID único de cada dispositivo
+        let marker; // Marcador del dispositivo actual
 
         function initMap() {
-            // Inicializar el mapa centrado en el destino inicialmente
             map = new google.maps.Map(document.getElementById("map"), {
                 zoom: 14,
                 center: destination
             });
 
-            // Marcar el destino en el mapa (Paseo La Galería)
+            // Marcar el destino en el mapa
             destinationMarker = new google.maps.Marker({
                 position: destination,
                 map: map,
@@ -36,18 +39,11 @@
                 title: "Destino: Paseo La Galería"
             });
 
-            // Crear una línea de polilínea para la ruta en tiempo real
-            polyline = new google.maps.Polyline({
-                path: [],
-                geodesic: true,
-                strokeColor: "#FF0000", // Color rojo para la ruta actual hacia el destino
-                strokeOpacity: 1.0,
-                strokeWeight: 2,
-                map: map
-            });
-
-            // Iniciar actualización de ubicación cada 5 segundos
-            setInterval(updateLocation, 5000);
+            // Actualizar la ubicación del dispositivo y obtener ubicaciones de todos los dispositivos cada 5 segundos
+            setInterval(() => {
+                updateLocation();
+                fetchAllLocations();
+            }, 5000);
         }
 
         async function updateLocation() {
@@ -55,31 +51,51 @@
                 navigator.geolocation.getCurrentPosition(
                     async (position) => {
                         const { latitude, longitude, accuracy } = position.coords;
-                        console.log("Ubicación capturada:", { latitude, longitude, accuracy });
+                        console.log("Ubicación capturada con precisión:", { latitude, longitude, accuracy });
 
                         // Enviar ubicación al backend
-                        try {
-                            const response = await fetch('/api/tracking/update-location', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                                },
-                                body: JSON.stringify({
-                                    device_id: deviceId,
-                                    latitude: latitude,
-                                    longitude: longitude
-                                })
-                            });
-                            const responseData = await response.json();
-                            console.log("Ubicación enviada:", responseData);
-                        } catch (error) {
-                            console.error('Error al enviar ubicación:', error);
+                        await fetch('/api/tracking/update-location', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                device_id: deviceId,
+                                latitude: latitude,
+                                longitude: longitude
+                            })
+                        })
+                        .then(response => {
+                            if (response.redirected) {
+                                console.warn('La solicitud fue redirigida a:', response.url);
+                            }
+                            return response.text(); // Usa text para ver el contenido
+                        })
+                        .then(text => console.log("Respuesta recibida:", text))
+                        .catch(error => console.error('Error al enviar ubicación:', error));
+
+
+
+                        // Obtener la ruta completa desde el backend
+                        const response = await fetch(`/api/tracking/${deviceId}/route`);
+                        const data = await response.json();
+                        const path = data.map(point => {
+                            if (typeof point.latitude === 'number' && typeof point.longitude === 'number') {
+                                return new google.maps.LatLng(point.latitude, point.longitude);
+                            } else {
+                                console.error("Coordenadas inválidas:", point);
+                                return null;
+                            }
+                        }).filter(point => point !== null);
+
+                        // Verificar si el path tiene coordenadas válidas
+                        if (path.length === 0) {
+                            console.error("No se encontraron coordenadas válidas en la respuesta.");
+                            return;
                         }
 
-                        // Actualizar el marcador de la ubicación actual en el mapa
-                        const currentPosition = new google.maps.LatLng(latitude, longitude);
-
+                        // Actualizar el marcador del dispositivo en la última posición de la ruta
+                        const currentPosition = path[path.length - 1];
                         if (!marker) {
                             marker = new google.maps.Marker({
                                 position: currentPosition,
@@ -92,38 +108,94 @@
                                     strokeColor: "#0000FF",
                                     strokeWeight: 2
                                 },
-                                title: "Tu ubicación actual"
+                                title: `Dispositivo: ${deviceId}`
                             });
                         } else {
                             marker.setPosition(currentPosition);
                         }
 
-                        // Actualizar la polilínea de la ruta actual hacia el destino
-                        path = [currentPosition, destination]; // Ruta directa al destino
-                        polyline.setPath(path);
-                        map.panTo(currentPosition);
+                        // Dibujar o actualizar la línea roja de la ruta
+                        if (!polylines[deviceId]) {
+                            polylines[deviceId] = new google.maps.Polyline({
+                                path: path,
+                                geodesic: true,
+                                strokeColor: "#FF0000",
+                                strokeOpacity: 1.0,
+                                strokeWeight: 2,
+                                map: map
+                            });
+                        } else {
+                            polylines[deviceId].setPath(path); // Actualiza la ruta con el nuevo camino
+                        }
+
+                        // Centrar el mapa en la posición actual del marcador
+                        map.panTo(marker.getPosition());
 
                         // Verificar si se ha llegado al destino
-                        const distance = google.maps.geometry.spherical.computeDistanceBetween(
-                            currentPosition,
-                            destinationMarker.getPosition()
-                        );
-                        if (distance < 50) {
-                            alert("¡Has llegado a Paseo La Galería!");
-                            clearInterval(updateLocation);
+                        const destino = new google.maps.LatLng(destination.lat, destination.lng);
+                        if (google.maps.geometry.spherical.computeDistanceBetween(marker.getPosition(), destino) < 50) {
+                            alert("¡Has llegado al destino!");
                         }
                     },
                     (error) => {
                         console.error('Error al obtener la posición:', error);
                     },
                     {
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                        maximumAge: 0
+                        enableHighAccuracy: true, // Precisión alta
+                        timeout: 10000,          // Esperar hasta 10 segundos
+                        maximumAge: 0            // No usar caché
                     }
                 );
             } else {
                 console.error("Geolocalización no es soportada por este navegador.");
+            }
+        }
+
+        async function fetchAllLocations() {
+            try {
+                const response = await fetch('/api/tracking/all-locations');
+                const locations = await response.json();
+
+                locations.forEach(device => {
+                    const { device_id, latitude, longitude } = device;
+                    const currentPosition = new google.maps.LatLng(latitude, longitude);
+
+                    // Si el marcador del dispositivo ya existe, actualízalo; si no, créalo
+                    if (markers[device_id]) {
+                        markers[device_id].setPosition(currentPosition);
+                    } else {
+                        markers[device_id] = new google.maps.Marker({
+                            position: currentPosition,
+                            map: map,
+                            icon: {
+                                path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                                scale: 4,
+                                fillColor: "#0000FF",
+                                fillOpacity: 0.8,
+                                strokeColor: "#0000FF",
+                                strokeWeight: 2
+                            },
+                            title: `Dispositivo: ${device_id}`
+                        });
+                    }
+
+                    // Si la polilínea del dispositivo ya existe, actualiza el camino; si no, créala
+                    if (!polylines[device_id]) {
+                        polylines[device_id] = new google.maps.Polyline({
+                            path: [currentPosition, destination], // Línea desde el origen al destino
+                            geodesic: true,
+                            strokeColor: "#FF0000", // Color rojo para la línea al destino
+                            strokeOpacity: 1.0,
+                            strokeWeight: 2,
+                            map: map
+                        });
+                    } else {
+                        // Actualizar la polilínea para reflejar la posición actual al destino
+                        polylines[device_id].setPath([currentPosition, destination]);
+                    }
+                });
+            } catch (error) {
+                console.error('Error al obtener ubicaciones de dispositivos:', error);
             }
         }
     </script>

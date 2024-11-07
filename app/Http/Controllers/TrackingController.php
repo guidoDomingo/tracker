@@ -10,6 +10,8 @@ class TrackingController extends Controller
 {
     public function updateLocation(Request $request)
     {
+
+        Log::info($request->all());
         $request->validate([
             'device_id' => 'required|integer',
             'latitude' => 'required|numeric',
@@ -35,6 +37,13 @@ class TrackingController extends Controller
         // Obtén la última ubicación del dispositivo
         $route = Tracking::where('device_id', $device)->get(['latitude', 'longitude', 'last_tracked_at']);
         return response()->json($route);
+    }
+
+    public function locations()
+    {
+        // Obtén la última ubicación del dispositivo
+        $tracking = Tracking::all(['device_id', 'latitude', 'longitude', 'last_tracked_at']);
+        return response()->json($tracking);
     }
 }
 
