@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('trackings', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('device_id'); // Referencia al dispositivo
+            $table->text('device_id'); // Referencia al dispositivo
             $table->decimal('latitude', 10, 8);
             $table->decimal('longitude', 11, 8);
             $table->timestamp('last_tracked_at');

@@ -15,7 +15,7 @@
         const markers = {}; // Diccionario para almacenar marcadores por `device_id`
         const polylines = {}; // Diccionario para almacenar polilíneas por `device_id`
         const destination = { lat: -25.2844707, lng: -57.5631504 }; // Coordenadas de Paseo La Galería
-        const deviceId = "1"; // Cambia esto a un ID único de cada dispositivo
+        let deviceId; // Cambia esto a un ID único de cada dispositivo
         let marker; // Marcador del dispositivo actual
 
         function initMap() {
@@ -46,7 +46,30 @@
             }, 5000);
         }
 
+        async function getDeviceId() {
+            try {
+                const response = await fetch('/api/tracking/set-device-identifier');
+                const data = await response.json();
+                deviceId = data.device_id; // Asigna el device_id a la variable global
+                console.log("device_id asignado:", deviceId);
+            } catch (error) {
+                console.error("Error al obtener el device_id:", error);
+            }
+        }
+
+      // Llama a getDeviceId() al cargar la página para obtener el device_id
+        getDeviceId();
+
+
         async function updateLocation() {
+
+            if (!deviceId) {
+                console.error("No se ha asignado un device_id.");
+                return;
+            }
+
+            console.log("deviceId recuperado:", deviceId);
+
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     async (position) => {
